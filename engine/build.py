@@ -1,13 +1,17 @@
-"""Catalyst Shorts engine v2 — one JSON script in, one finished vertical MP4 out.
+"""Catalyst Shorts engine v2 — one JSON script in, one finished vertical MP4 per account out.
 
-usage:  python3 -I build.py <dir> make            # tts -> timeline -> audio -> render -> mux -> qc
+usage:  python3 -I build.py <dir> make            # tts -> timeline -> audio -> (render -> mux -> qc) per variant
         python3 -I build.py <dir> stills 1.5,9.2  # preview PNGs at given seconds (after tts+timeline)
-        python3 -I build.py <dir> render 3,5      # re-render only these scenes, then run mux + qc
+        python3 -I build.py <dir> render 3,5      # re-render only these scenes in every variant, then mux + qc
+        python3 -I build.py <dir> variant youtube # full render + mux + qc of one variant only
 <dir>/script.json (see RUNBOOK.md):
   {"voice": "am_michael", "speed": 1.05, "sources": "Sources: ...",
+   "variants": {"youtube": "THE CAPTAIN", "instagram": "CATALYST TECH"},
    "segments": [{"say": "chunk one | chunk two => *shown* two | ...", "scene": {"type": "hook", ...}}, ...]}
+Each variant becomes <dir>/final_<tag>.mp4 with that account name in the top bar and on the end card
+(variants with the same name share one render). Without "variants": <dir>/final.mp4 named CATALYST TECH.
 """
-import hashlib, json, os, subprocess, sys
+import hashlib, html, json, os, re, shutil, subprocess, sys
 import numpy as np, soundfile as sf
 from scipy.signal import butter, lfilter
 
@@ -17,6 +21,21 @@ CHROME = os.environ.get("CHROME", "/usr/bin/google-chrome")
 W, H, FPS = 1080, 1920, 30
 LEAD, GAP, TAIL = 0.15, 0.18, 1.6
 SR = 48000
+DEFAULT_BRAND = "CATALYST TECH"
+
+
+def variants(spec):
+    v = spec.get("variants") or {"": DEFAULT_BRAND}
+    return [(t, v[t]) for t in v]
+
+
+def sfx(tag):
+    return f"_{tag}" if tag else ""
+
+
+def clean_brand(b):
+    b = re.sub(r"[^A-Za-z0-9 .&'!-]", "", str(b)).strip().upper()[:24]
+    return html.escape(b or DEFAULT_BRAND)
 
 
 def chunks_of(seg):
@@ -134,82 +153,94 @@ def browser():
     return p, b
 
 
-def page(d, b):
+def page(d, b, brand=DEFAULT_BRAND):
     spec = load(d); tl = json.load(open(f"{d}/timeline.json"))
-    html = open(f"{ENGINE}/page.html").read()
-    html = (html.replace("__TIMELINE__", json.dumps(tl)).replace("__SCENES__", json.dumps([s["scene"] for s in spec["segments"]]))
-            .replace("__META__", json.dumps({"sources": spec.get("sources", "")})))
+    doc = open(f"{ENGINE}/page.html").read()
+    doc = (doc.replace("__TIMELINE__", json.dumps(tl)).replace("__SCENES__", json.dumps([s["scene"] for s in spec["segments"]]))
+           .replace("__META__", json.dumps({"sources": spec.get("sources", "")})).replace("__BRAND__", clean_brand(brand)))
     pg = b.new_page(viewport={"width": W, "height": H}); errs = []
     pg.on("pageerror", lambda e: errs.append(str(e)))
     pg.on("console", lambda m: m.type == "error" and errs.append(m.text))
-    pg.set_content(html); pg.evaluate("window.READY"); pg.wait_for_timeout(250)
+    pg.set_content(doc); pg.evaluate("window.READY"); pg.wait_for_timeout(250)
     return pg, tl, errs
 
 
 def stills(d, times):
-    p, b = browser(); pg, tl, errs = page(d, b); os.makedirs(f"{d}/stills", exist_ok=True)
+    p, b = browser(); pg, tl, errs = page(d, b, variants(load(d))[0][1]); os.makedirs(f"{d}/stills", exist_ok=True)
     for t in times:
         pg.evaluate(f"render({t})"); pg.screenshot(path=f"{d}/stills/t{t:05.2f}.png")
     print("page errors:", errs[:5] or "none"); b.close(); p.stop()
 
 
-def render(d, only=None):
-    p, b = browser(); pg, tl, errs = page(d, b)
+def render(d, only=None, tag="", brand=DEFAULT_BRAND):
+    p, b = browser(); pg, tl, errs = page(d, b, brand)
     if errs: raise SystemExit(f"page errors: {errs[:5]}")
     segs = tl["segs"]; bounds = [0] + [s["start"] - .09 for s in segs[1:]] + [tl["total"]]
-    os.makedirs(f"{d}/scenes", exist_ok=True); files = []
+    sd = f"{d}/scenes{sfx(tag)}"; os.makedirs(sd, exist_ok=True); files = []
     for i in range(len(segs)):
-        out = f"{d}/scenes/s{i:02d}.mp4"; files.append(out)
+        out = f"{sd}/s{i:02d}.mp4"; files.append(out)
         if only is not None and i not in only and os.path.exists(out): continue
-        f0, f1 = round(bounds[i] * FPS), round(bounds[i + 1] * FPS); tmp = f"{d}/scenes/s{i:02d}.tmp.mp4"
+        f0, f1 = round(bounds[i] * FPS), round(bounds[i + 1] * FPS); tmp = f"{sd}/s{i:02d}.tmp.mp4"
         ff = subprocess.Popen(["ffmpeg", "-y", "-loglevel", "error", "-f", "image2pipe", "-framerate", str(FPS), "-i", "-", "-c:v", "libx264",
                                "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-r", str(FPS), tmp], stdin=subprocess.PIPE)
         for f in range(f0, f1):
             pg.evaluate(f"render({f / FPS})"); ff.stdin.write(pg.screenshot(type="jpeg", quality=92))
         ff.stdin.close()
         if ff.wait() != 0: raise SystemExit(f"ffmpeg failed on scene {i}")
-        os.replace(tmp, out); print("scene", i, f1 - f0, "frames", flush=True)
+        os.replace(tmp, out); print("scene", i, f1 - f0, "frames", tag, flush=True)
     if errs: print("page errors:", errs[:5])
     b.close(); p.stop()
-    with open(f"{d}/scenes/list.txt", "w") as fh:
+    with open(f"{sd}/list.txt", "w") as fh:
         for f in files: fh.write(f"file '{os.path.abspath(f)}'\n")
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", f"{d}/scenes/list.txt", "-c", "copy", f"{d}/video.mp4"], check=True)
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", f"{sd}/list.txt", "-c", "copy", f"{d}/video{sfx(tag)}.mp4"], check=True)
 
 
-def mux(d):
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{d}/video.mp4", "-i", f"{d}/mix.wav", "-map", "0:v", "-map", "1:a", "-c:v", "copy",
+def mux(d, tag=""):
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{d}/video{sfx(tag)}.mp4", "-i", f"{d}/mix.wav", "-map", "0:v", "-map", "1:a", "-c:v", "copy",
                     "-af", "loudnorm=I=-14:TP=-1.5:LRA=11", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-shortest", "-movflags", "+faststart",
-                    f"{d}/final.mp4"], check=True)
+                    f"{d}/final{sfx(tag)}.mp4"], check=True)
 
 
-def qc(d):
+def build(d, only=None, tags=None):
+    done = {}
+    for tag, brand in variants(load(d)):
+        if tags and tag not in tags: continue
+        key = clean_brand(brand)
+        if key in done:
+            shutil.copyfile(f"{d}/final{sfx(done[key])}.mp4", f"{d}/final{sfx(tag)}.mp4")
+            print("variant", tag, "= copy of", done[key]); continue
+        render(d, only, tag, brand); mux(d, tag); qc(d, tag); done[key] = tag
+
+
+def qc(d, tag=""):
     from PIL import Image
-    tl = json.load(open(f"{d}/timeline.json")); os.makedirs(f"{d}/qc", exist_ok=True)
+    tl = json.load(open(f"{d}/timeline.json")); qd = f"{d}/qc{sfx(tag)}"; final = f"{d}/final{sfx(tag)}.mp4"; os.makedirs(qd, exist_ok=True)
     times = [s["start"] + .72 * (s["end"] - s["start"]) for s in tl["segs"]] + [tl["total"] - .3]
     ims = []
     for k, t in enumerate(times):
-        f = f"{d}/qc/f{k:02d}.png"
-        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-ss", f"{t:.2f}", "-i", f"{d}/final.mp4", "-frames:v", "1", f], check=True)
+        f = f"{qd}/f{k:02d}.png"
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-ss", f"{t:.2f}", "-i", final, "-frames:v", "1", f], check=True)
         ims.append(Image.open(f).convert("RGB").resize((360, 640)))
     cols = 5; rows = (len(ims) + cols - 1) // cols; sheet = Image.new("RGB", (360 * cols, 640 * rows), (40, 40, 40))
     for k, im in enumerate(ims): sheet.paste(im, ((k % cols) * 360, (k // cols) * 640))
-    sheet.save(f"{d}/qc/sheet.png")
-    probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration,size", "-of", "json", f"{d}/final.mp4"], capture_output=True, text=True)
+    sheet.save(f"{qd}/sheet.png")
+    probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration,size", "-of", "json", final], capture_output=True, text=True)
     fmt = json.loads(probe.stdout)["format"]
-    loud = subprocess.run(["ffmpeg", "-hide_banner", "-i", f"{d}/final.mp4", "-af", "ebur128", "-f", "null", "-"], capture_output=True, text=True).stderr
+    loud = subprocess.run(["ffmpeg", "-hide_banner", "-i", final, "-af", "ebur128", "-f", "null", "-"], capture_output=True, text=True).stderr
     lufs = [l.strip() for l in loud.splitlines() if l.strip().startswith("I:")][-1:]
-    print(f"QC duration={float(fmt['duration']):.2f}s size={int(fmt['size']) / 1e6:.1f}MB loudness={lufs} sheet={d}/qc/sheet.png")
+    print(f"QC {tag or 'final'} duration={float(fmt['duration']):.2f}s size={int(fmt['size']) / 1e6:.1f}MB loudness={lufs} sheet={qd}/sheet.png")
 
 
 if __name__ == "__main__":
     d, cmd = sys.argv[1], sys.argv[2]
     arg = sys.argv[3] if len(sys.argv) > 3 else None
     if cmd == "make":
-        tts(d); timeline(d); audio(d); render(d); mux(d); qc(d)
+        tts(d); timeline(d); audio(d); build(d)
     elif cmd == "tts": tts(d)
     elif cmd == "timeline": timeline(d)
     elif cmd == "audio": audio(d)
     elif cmd == "stills": stills(d, [float(x) for x in arg.split(",")])
-    elif cmd == "render": render(d, [int(x) for x in arg.split(",")] if arg else None); mux(d); qc(d)
-    elif cmd == "mux": mux(d)
-    elif cmd == "qc": qc(d)
+    elif cmd == "render": build(d, [int(x) for x in arg.split(",")] if arg else None)
+    elif cmd == "variant": build(d, None, [arg])
+    elif cmd == "mux": [mux(d, t) for t, _ in variants(load(d))]
+    elif cmd == "qc": [qc(d, t) for t, _ in variants(load(d))]
