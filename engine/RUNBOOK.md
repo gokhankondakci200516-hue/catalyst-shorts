@@ -1,8 +1,9 @@
-# Catalyst Tech — Daily Shorts Runbook (v2 · 2026-11-13)
+# Catalyst Tech — Daily Shorts Runbook (v3 · 2026-11-13)
 
 ## Mission
 Every day: pick ONE fresh tech story, make ONE ~50 s vertical explainer video in English, publish it to YouTube Shorts +
-Instagram Reels (via Buffer) and TikTok (via Metricool, Monday–Thursday only), then send Mate a short report in Turkish.
+Instagram Reels (via Buffer), then send Mate a short report in Turkish. NO TikTok: Mate said on 13 Nov 2026 not to post
+to TikTok. Never post there and never use Metricool, even though it is still connected.
 Mate (Gökhan Kondakcı) decided: fully automatic, no approval step, Claude decides topic, tone and everything else.
 Never publish a video that failed QC. Never publish twice on the same day (§0.5).
 
@@ -11,10 +12,9 @@ Never publish a video that failed QC. Never publish twice on the same day (§0.5
 |---|---|---|---|
 | YouTube Shorts | "The Captain" — Buffer channel `6af7279362b70b94b01bea38` | `youtube` → `THE CAPTAIN` | Follow The Captain for daily tech in 60 seconds. |
 | Instagram Reels | "catalysttech01" — Buffer channel `6af7275962b70b94b01be5c5` | `instagram` → `CATALYST TECH` | Follow @catalysttech01 for daily tech in 60 seconds. |
-| TikTok (Mon–Thu) | "Bubu" — Metricool blogId/brandId `8085653` | `tiktok` → `BUBU` | Follow for daily tech in 60 seconds. |
 
 Buffer organization: `6af720fc2d3df5092c7c2051` ("My organization"). Timezone everywhere: Europe/Istanbul (+03:00).
-If Mate renames or reconnects an account, IDs and names can change: re-list (Buffer `list_channels`, Metricool `getBrandSettings`),
+If Mate renames or reconnects an account, IDs and names can change: re-list (Buffer `list_channels`),
 pick the channel by service, use its current name on screen and in the follow line, and mention the change in the report.
 The narration never says a channel name, because the same audio goes to every account.
 
@@ -26,12 +26,9 @@ python3 -c "import datetime as d,zoneinfo as z;t=d.datetime.now(z.ZoneInfo('Euro
 
 ## 0. Preconditions: check first
 1. Buffer connector tools exist (ToolSearch "buffer").
-2. Metricool connector tools exist (ToolSearch "metricool").
-3. GitHub repo `gokhankondakci200516-hue/catalyst-shorts` can be attached with push access
+2. GitHub repo `gokhankondakci200516-hue/catalyst-shorts` can be attached with push access
    (mcp__claude-code-remote__add_repo owner=gokhankondakci200516-hue repo=catalyst-shorts access=push).
-- Repo missing → no way to host the video → do not produce; report what is missing (§9) and stop.
-- Buffer missing → still do TikTok (if Mon–Thu). Metricool missing → still do YouTube + Instagram.
-- Both Buffer and Metricool missing → report what is missing (§9) and stop.
+- Either one missing → do not produce; report what is missing (§9) and stop.
 
 ## 0.5 Already published today? Never post twice
 Today = the Europe/Istanbul date. Call Buffer `list_posts` with
@@ -84,12 +81,12 @@ and set `CHROME` to that browser's path.
 ```
 {"voice": "<today's voice>", "speed": 1.05,
  "sources": "Sources: Outlet A · Outlet B · Outlet C",
- "variants": {"youtube": "THE CAPTAIN", "instagram": "CATALYST TECH", "tiktok": "BUBU"},
+ "variants": {"youtube": "THE CAPTAIN", "instagram": "CATALYST TECH"},
  "meta": {"title": "...", "description": "...", "caption": "..."},
  "segments": [{"say": "...", "scene": {"type": "hook", ...}}, ...]}
 ```
 `variants`: one finished video per account, each with that account's name in the top bar and on the end card
-(names from the table above). Leave out `tiktok` on Friday, Saturday and Sunday.
+(names from the table above). Never add a `tiktok` variant.
 Scene types (`*` = optional). Keep text short — titles are auto-shrunk to fit but must stay readable.
 - `hook`: label, line1 (white, ≤14 chars, CAPS), line2 (gradient, ≤12 chars, CAPS), art*
 - `title`: label, title (`*word*` = gradient), art*, number* {value, prefix, suffix, decimals, cue}, sub*, sub_cue*
@@ -114,20 +111,19 @@ Meta:
 - `title`: YouTube title ≤ 70 chars with the product/company name; no clickbait.
 - `description` (YouTube): 1–2 sentences + the viewer question + "Narrated with an AI voice." + "Sources: …" +
   "Follow The Captain for daily tech in 60 seconds." + 5–7 hashtags including #Shorts and #tech.
-- `caption` (Instagram and TikTok): a hook line + 1–2 short lines + the viewer question + "Narrated with an AI voice." +
-  "Sources: …" + a line `{FOLLOW}` + 5–8 hashtags including #tech. When posting, replace `{FOLLOW}` with that platform's
-  follow line from the table.
+- `caption` (Instagram): a hook line + 1–2 short lines + the viewer question + "Narrated with an AI voice." +
+  "Sources: …" + "Follow @catalysttech01 for daily tech in 60 seconds." + 5–8 hashtags including #tech.
 
-## 5. Build and QC (≈5 min per variant: 10–15 min)
+## 5. Build and QC (≈5 min per variant: ≈10 min)
 ```
 D=~/work/out/$(TZ=Europe/Istanbul date +%F); mkdir -p $D   # write $D/script.json
 KOKORO_DIR=~/models python3 -I ~/engine/build.py $D make
 ```
-Output: `$D/final_youtube.mp4`, `$D/final_instagram.mp4` (+ `$D/final_tiktok.mp4`). Read every `$D/qc_<tag>/sheet.png`
+Output: `$D/final_youtube.mp4` and `$D/final_instagram.mp4`. Read both `$D/qc_<tag>/sheet.png`
 (one frame per scene + end card) and check: nothing cut off or overlapping, nothing outside the frame, numbers and names
 correct, captions readable, the right account name in the top bar and on the end card. Each QC line must show
 duration ≤ 59 s and loudness ≈ -14 LUFS. Fix problems in script.json and rebuild (`build.py $D stills 3.5,9.1` for quick
-looks, `build.py $D render 2,4` to redo scenes in every variant, `build.py $D variant tiktok` for one variant).
+looks, `build.py $D render 2,4` to redo scenes in every variant, `build.py $D variant instagram` for one variant).
 Never publish a video that failed QC.
 
 ## 6. Host the files
@@ -147,17 +143,9 @@ Load each tool's schema (ToolSearch) first; never invent parameters. Each platfo
   "metadata": {"youtube": {"title": "<meta.title>", "categoryId": "28", "privacy": "public", "madeForKids": false, "isAiGenerated": true}}}`
 - Instagram — Buffer `create_post`:
   `{"channelId": "6af7275962b70b94b01be5c5", "schedulingType": "automatic", "mode": "shareNow",
-  "assets": [{"video": {"url": "<…-instagram.mp4>"}}], "text": "<meta.caption with the Instagram follow line>",
+  "assets": [{"video": {"url": "<…-instagram.mp4>"}}], "text": "<meta.caption>",
   "metadata": {"instagram": {"type": "reel", "shouldShareToFeed": true, "isAiGenerated": true}}}`
-- TikTok, Monday–Thursday only (Metricool free plan: 20 published posts/month) — Metricool `createScheduledPost` with
-  `blogId "8085653"`, `date` = now + 10 min as `YYYY-MM-DDTHH:MM:SS+03:00`, and `info` = this JSON as a string:
-  `{"autoPublish": true, "draft": false, "descendants": [], "firstCommentText": "", "hasNotReadNotes": false,
-  "media": ["<…-tiktok.mp4>"], "mediaAltText": [], "providers": [{"network": "tiktok"}],
-  "publicationDate": {"dateTime": "<same time, YYYY-MM-DDTHH:MM:SS>", "timezone": "Europe/Istanbul"},
-  "shortener": false, "smartLinkData": {"ids": []}, "text": "<meta.caption with the TikTok follow line>",
-  "tiktokData": {"privacyOption": "PUBLIC_TO_EVERYONE", "isAigc": true, "disableComment": false, "disableDuet": false,
-  "disableStitch": false, "commercialContentThirdParty": false, "commercialContentOwnBrand": false, "autoAddMusic": false,
-  "photoCoverIndex": 0, "title": "<meta.title>"}}`
+- TikTok: never (Mate's decision, 13 Nov 2026).
 - About 3 minutes later, `get_post` each Buffer post: expect status `sent` and an `externalLink` (Instagram can stay
   `sending` for a few minutes). On failure retry once; if it still fails, report it. Never re-post without checking §0.5 first.
   A sent YouTube post may come back with `isAiGenerated: false` (seen on 13 Nov 2026); that is not a failure and is no reason
@@ -168,7 +156,7 @@ Load each tool's schema (ToolSearch) first; never invent parameters. Each platfo
 Send with SendUserMessage AND repeat it as your final message:
 ```
 Bugünün videosu: <konu, 1 cümle Türkçe> (<süre> sn, <erkek/kadın> sesi)
-YouTube (The Captain) ✅ · Instagram (catalysttech01) ✅ · TikTok (Bubu) ✅ (veya: bugün TikTok günü değil)
+YouTube (The Captain) ✅ · Instagram (catalysttech01) ✅
 <YouTube ve Instagram linkleri>
 Dün: <durum / izlenme, varsa>
 <Sadece bir sorun ya da ondan bir şey gerekiyorsa tek cümle. Yoksa: "Senin yapman gereken bir şey yok.">
@@ -177,14 +165,14 @@ Dün: <durum / izlenme, varsa>
 ## 9. Setup steps to quote when something is missing (Turkish)
 1. Instagram → Ayarlar ve hareketler → Hesap türü ve araçları → Profesyonel hesaba geç → İçerik üreticisi.
 2. buffer.com → ücretsiz hesap → kanal bağla: YouTube kanalı + Instagram.
-3. metricool.com → ücretsiz hesap → TikTok'u bağla.
-4. GitHub → yeni depo `catalyst-shorts`, Public, "Add a README" işaretli → Create; sonra Settings → Pages → Branch: main → Save.
-5. Claude bağlayıcıları: Metricool'u ekle; Buffer'ı özel bağlayıcı olarak ekle: https://mcp.buffer.com/mcp
+3. GitHub → yeni depo `catalyst-shorts`, Public, "Add a README" işaretli → Create; sonra Settings → Pages → Branch: main → Save.
+4. Claude bağlayıcıları: Buffer'ı özel bağlayıcı olarak ekle: https://mcp.buffer.com/mcp
 
 ## 10. Standing rules
 - The core news needs ≥2 reliable sources; every other claim ≥1.
 - No copyrighted images, logos or music; no likeness of real people; no impersonation.
 - "AI VOICE" stays on screen (the engine draws it); AI disclosure in every caption; platform AI flags wherever offered.
 - Each account's video shows that account's name; the narration names no channel.
+- Never post to TikTok and never use Metricool (Mate's decision, 13 Nov 2026).
 - If unsure about posting (tool errors, policy questions), don't guess — skip and report.
 - Don't change engine files except to fix a real bug; mention any change in the report.
